@@ -1,0 +1,170 @@
+name: Tests & Linting
+
+on:
+  push:
+    branches:
+      - mvp
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  backend-tests:
+    name: Backend Tests (Python)
+    runs-on: ubuntu-latest
+    
+    services:
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: saarturnier_test
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+        ports:
+          - 3306:3306
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      
+      - name: Run Alembic migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/saarturnier_test
+        run: |
+          alembic upgrade head
+      
+      - name: Run pytest
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/saarturnier_test
+          JWT_SECRET_KEY: test-secret-key-do-not-use-in-production
+        run: |
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+  frontend-tests:
+    name: Frontend Tests (React/TypeScript)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Run TypeScript type check
+        working-directory: ./frontend
+        run: npx tsc --noEmit
+      
+      - name: Run Vitest
+        working-directory: ./frontend
+        run: npm run test:coverage
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./frontend/coverage/coverage-final.json
+          flags: frontend
+          fail_ci_if_error: false
+
+  lint:
+    name: Linting & Format Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install Python linting tools
+        run: |
+          pip install flake8 black isort
+      
+      - name: Check Python formatting (black)
+        working-directory: ./backend
+        run: black --check app/ alembic/
+        continue-on-error: true
+      
+      - name: Check Python import order (isort)
+        working-directory: ./backend
+        run: isort --check-only app/ alembic/
+        continue-on-error: true
+      
+      - name: Lint Python (flake8)
+        working-directory: ./backend
+        run: flake8 app/ --max-line-length=120
+        continue-on-error: true
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Lint TypeScript/React (ESLint)
+        working-directory: ./frontend
+        run: npm run lint
+        continue-on-error: true
+
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+      
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
