@@ -3,6 +3,7 @@
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vitest/config';
+// import type { PluginOption } from 'vite';
 
 export default defineConfig({
   plugins: [react()],
